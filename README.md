@@ -482,10 +482,6 @@ python -c "from monitoring import MonitoringManager; print('Monitoring OK')"
 5. Run the test suite
 6. Submit a pull request
 
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 ## Acknowledgments
 
 - **Data Sources**: USGS, NASA EONET, Open-Meteo
@@ -505,3 +501,4 @@ For support and questions:
 **Project Kairos** - *Because timing is everything in disaster response*
 
 Built with ❤️ for disaster preparedness and community safety.
+
