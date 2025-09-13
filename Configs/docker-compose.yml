@@ -1,0 +1,185 @@
+version: '3.8'
+
+services:
+  kairos-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: project-kairos:latest
+    container_name: kairos-production
+    restart: unless-stopped
+    
+    ports:
+      - "8501:8501"
+    
+    environment:
+      - KAIROS_ENV=production
+      - KAIROS_DB_PATH=/app/data/kairos_production.db
+      - KAIROS_LOG_LEVEL=INFO
+      - KAIROS_LOG_FILE=/app/logs/kairos_production.log
+      - KAIROS_API_TIMEOUT=15
+      - KAIROS_API_MAX_RETRIES=3
+      - KAIROS_CACHE_WEATHER_TTL=300
+      - KAIROS_CACHE_ALERTS_TTL=600
+      - KAIROS_CACHE_DISASTERS_TTL=1800
+      - KAIROS_ENABLE_AUTH=false
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_SERVER_ENABLE_CORS=false
+      - STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true
+    
+    volumes:
+      - kairos-data:/app/data
+      - kairos-logs:/app/logs
+      - kairos-backups:/app/backups
+    
+    networks:
+      - kairos-network
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kairos.rule=Host(`kairos.yourdomain.com`)"
+      - "traefik.http.routers.kairos.tls=true"
+      - "traefik.http.routers.kairos.tls.certresolver=letsencrypt"
+      - "traefik.http.services.kairos.loadbalancer.server.port=8501"
+
+  # Optional: Reverse proxy with SSL termination
+  traefik:
+    image: traefik:v3.0
+    container_name: kairos-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"  # Traefik dashboard
+    
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --certificatesresolvers.letsencrypt.acme.email=admin@yourdomain.com
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --log.level=INFO
+      - --accesslog=true
+    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+    
+    networks:
+      - kairos-network
+    
+    # Optional: Only enable if you want reverse proxy
+    profiles:
+      - proxy
+
+  # Optional: Redis for distributed caching (for multi-instance deployments)
+  redis:
+    image: redis:7-alpine
+    container_name: kairos-redis
+    restart: unless-stopped
+    
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    
+    volumes:
+      - redis-data:/data
+    
+    networks:
+      - kairos-network
+    
+    # Optional: Only enable for distributed deployments
+    profiles:
+      - distributed
+
+  # Optional: Monitoring with Prometheus and Grafana
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: kairos-prometheus
+    restart: unless-stopped
+    
+    ports:
+      - "9090:9090"
+    
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    
+    networks:
+      - kairos-network
+    
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: kairos-grafana
+    restart: unless-stopped
+    
+    ports:
+      - "3000:3000"
+    
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana:/etc/grafana/provisioning:ro
+    
+    networks:
+      - kairos-network
+    
+    profiles:
+      - monitoring
+
+volumes:
+  kairos-data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./data
+      o: bind
+  
+  kairos-logs:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./logs
+      o: bind
+  
+  kairos-backups:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./backups
+      o: bind
+  
+  redis-data:
+  prometheus-data:
+  grafana-data:
+  traefik-letsencrypt:
+
+networks:
+  kairos-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
